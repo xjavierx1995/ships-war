@@ -109,7 +109,7 @@ const bullets = [];
 const enemies = [];
 const particles = [];
 let score = 0, lives = 3, spawnTimer = 0, gameOver = false, shake = 0;
-let boss = null, bossSpawned = false, nextBossScore = 1500;
+let boss = null, bossSpawned = false, nextBossScore = 1500, bossDefeatedCooldown = 0;
 
 const enemyImg = new Image();
 enemyImg.src = 'assets/images/enemy.png';
@@ -144,7 +144,8 @@ function update() {
   if (gameOver) return;
 
   // Check for boss spawn
-  if (!bossSpawned && score >= nextBossScore) {
+  if (bossDefeatedCooldown > 0) bossDefeatedCooldown--;
+  if (!bossSpawned && bossDefeatedCooldown === 0 && score >= nextBossScore) {
     spawnBoss();
     nextBossScore += 1500;
   }
@@ -200,6 +201,7 @@ function update() {
           bossSpawned = false;
           boss = null;
           spawnTimer = 0;
+          bossDefeatedCooldown = 60;
         }
         break;
       }
