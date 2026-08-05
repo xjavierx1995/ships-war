@@ -1,0 +1,360 @@
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+
+const keys = {};
+const keysPressed = {};
+document.addEventListener('keydown', e => {
+  if (!keys[e.code]) keysPressed[e.code] = true;
+  keys[e.code] = true;
+});
+document.addEventListener('keyup', e => keys[e.code] = false);
+
+// Touch controls
+const touchState = { moveX: 0, moveY: 0, shoot: false, shootPressed: false };
+const joystickArea = document.getElementById('joystickArea');
+const joystickStick = document.getElementById('joystickStick');
+const shootBtn = document.getElementById('shootBtn');
+let joystickActive = false, joystickStartX = 0, joystickStartY = 0, joystickId = null;
+
+function updateJoystick(clientX, clientY) {
+  const rect = joystickArea.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2;
+  const centerY = rect.top + rect.height / 2;
+  let dx = clientX - centerX;
+  let dy = clientY - centerY;
+  const maxDist = 50;
+  const dist = Math.hypot(dx, dy);
+  if (dist > maxDist) {
+    dx = dx / dist * maxDist;
+    dy = dy / dist * maxDist;
+  }
+  joystickStick.style.left = (30 + dx) + 'px';
+  joystickStick.style.top = (30 + dy) + 'px';
+  touchState.moveX = (dx / maxDist) * 0.6;
+  touchState.moveY = (dy / maxDist) * 0.6;
+}
+
+joystickArea.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (joystickId === null) {
+      joystickId = touch.identifier;
+      joystickActive = true;
+      const rect = joystickArea.getBoundingClientRect();
+      joystickStartX = rect.left + rect.width / 2;
+      joystickStartY = rect.top + rect.height / 2;
+      updateJoystick(touch.clientX, touch.clientY);
+    }
+  }
+}, { passive: false });
+
+joystickArea.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickId) {
+      updateJoystick(touch.clientX, touch.clientY);
+    }
+  }
+}, { passive: false });
+
+function resetJoystick() {
+  joystickActive = false;
+  joystickId = null;
+  touchState.moveX = 0;
+  touchState.moveY = 0;
+  joystickStick.style.left = '30px';
+  joystickStick.style.top = '30px';
+}
+
+joystickArea.addEventListener('touchend', e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickId) resetJoystick();
+  }
+});
+joystickArea.addEventListener('touchcancel', e => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === joystickId) resetJoystick();
+  }
+});
+
+shootBtn.addEventListener('touchstart', e => {
+  e.preventDefault();
+  touchState.shoot = true;
+  if (!touchState.shootPressed) touchState.shootPressed = true;
+}, { passive: false });
+shootBtn.addEventListener('touchend', e => {
+  e.preventDefault();
+  touchState.shoot = false;
+  touchState.shootPressed = false;
+}, { passive: false });
+shootBtn.addEventListener('touchcancel', e => {
+  touchState.shoot = false;
+  touchState.shootPressed = false;
+}, { passive: false });
+
+// Restart button
+const restartBtn = document.getElementById('restartBtn');
+restartBtn.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if (gameOver) location.reload();
+}, { passive: false });
+restartBtn.addEventListener('click', e => {
+  if (gameOver) location.reload();
+});
+
+// Game state
+const player = { x: W/2 - 20, y: H - 80, w: 40, h: 40, speed: 6, cooldown: 0 };
+const bullets = [];
+const enemies = [];
+const particles = [];
+let score = 0, lives = 3, spawnTimer = 0, gameOver = false, shake = 0;
+let boss = null, bossSpawned = false, nextBossScore = 1500;
+
+const enemyImg = new Image();
+enemyImg.src = 'assets/images/enemy.png';
+const enemyDeadSound = new Audio('assets/sounds/enemy-dead.ogg');
+const shotSound = new Audio('assets/sounds/shot.mp3');
+
+function spawnEnemy() {
+  const side = Math.random() < 0.5 ? -30 : W + 30;
+  const y = Math.random() * (H * 0.6) + 50;
+  const speedX = (side < 0 ? 1 : -1) * (1 + Math.random() * 2);
+  const speedY = (Math.random() - 0.5) * 2;
+  enemies.push({ x: side, y, w: 50, h: 50, vx: speedX, vy: speedY, hp: 1 });
+}
+
+function spawnBoss() {
+  boss = {
+    x: W / 2 - 60,
+    y: 80,
+    w: 120,
+    h: 120,
+    vx: 2,
+    vy: 1,
+    hp: 15,
+    maxHp: 15,
+    hitFlash: 0
+  };
+  bossSpawned = true;
+  enemies.length = 0;
+}
+
+function update() {
+  if (gameOver) return;
+
+  // Check for boss spawn
+  if (!bossSpawned && score >= nextBossScore) {
+    spawnBoss();
+    nextBossScore += 1500;
+  }
+
+  // Player movement (keyboard + touch)
+  if (keys['ArrowLeft'] || keys['KeyA'] || touchState.moveX < -0.1) player.x -= player.speed;
+  if (keys['ArrowRight'] || keys['KeyD'] || touchState.moveX > 0.1) player.x += player.speed;
+  if (keys['ArrowUp'] || keys['KeyW'] || touchState.moveY < -0.1) player.y -= player.speed;
+  if (keys['ArrowDown'] || keys['KeyS'] || touchState.moveY > 0.1) player.y += player.speed;
+  player.x = Math.max(0, Math.min(W - player.w, player.x));
+  player.y = Math.max(0, Math.min(H - player.h, player.y));
+
+  // Shoot (keyboard + touch)
+  if ((keysPressed['Space'] || keysPressed['KeyJ'] || touchState.shootPressed) && player.cooldown <= 0) {
+    bullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 15, vy: -10 });
+    shotSound.currentTime = 0;
+    shotSound.play();
+    player.cooldown = 10;
+    touchState.shootPressed = false;
+  }
+  player.cooldown--;
+
+  // Bullets
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    bullets[i].y += bullets[i].vy;
+    if (bullets[i].y < -20) bullets.splice(i, 1);
+  }
+
+  // Enemies
+  if (!bossSpawned) {
+    spawnTimer++;
+    if (spawnTimer > 45) { spawnEnemy(); spawnTimer = 0; }
+  }
+
+  // Boss logic
+  if (bossSpawned && boss) {
+    boss.x += boss.vx;
+    boss.y += boss.vy;
+    if (boss.x <= 0 || boss.x + boss.w >= W) boss.vx *= -1;
+    if (boss.y <= 50 || boss.y + boss.h >= H * 0.5) boss.vy *= -1;
+    if (boss.hitFlash > 0) boss.hitFlash--;
+
+    // Bullet collision with boss
+    for (let j = bullets.length - 1; j >= 0; j--) {
+      const b = bullets[j];
+      if (b.x < boss.x + boss.w && b.x + b.w > boss.x && b.y < boss.y + boss.h && b.y + b.h > boss.y) {
+        boss.hp--; boss.hitFlash = 5; bullets.splice(j, 1);
+        if (boss.hp <= 0) {
+          score += 500;
+          enemyDeadSound.currentTime = 0;
+          enemyDeadSound.play();
+          for (let k = 0; k < 30; k++) particles.push({ x: boss.x + boss.w/2, y: boss.y + boss.h/2, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10, life: 50, color: '#ff0' });
+          bossSpawned = false;
+          boss = null;
+          spawnTimer = 0;
+        }
+        break;
+      }
+    }
+
+    // Player collision with boss
+    if (player.x < boss.x + boss.w && player.x + player.w > boss.x && player.y < boss.y + boss.h && player.y + player.h > boss.y) {
+      lives--; shake = 20;
+      for (let k = 0; k < 20; k++) particles.push({ x: player.x + player.w/2, y: player.y + player.h/2, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10, life: 50, color: '#fff' });
+      if (lives <= 0) gameOver = true;
+    }
+  }
+
+  // Normal enemies
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.x += e.vx; e.y += e.vy;
+    if (e.y < 50 || e.y > H - 100) e.vy *= -1;
+    if (e.x < -50 || e.x > W + 50) { enemies.splice(i, 1); continue; }
+
+    // Bullet collision
+    for (let j = bullets.length - 1; j >= 0; j--) {
+      const b = bullets[j];
+      if (b.x < e.x + e.w && b.x + b.w > e.x && b.y < e.y + e.h && b.y + b.h > e.y) {
+        e.hp--; bullets.splice(j, 1);
+        if (e.hp <= 0) {
+          score += 100;
+          enemyDeadSound.currentTime = 0;
+          enemyDeadSound.play();
+          for (let k = 0; k < 8; k++) particles.push({ x: e.x + e.w/2, y: e.y + e.h/2, vx: (Math.random()-0.5)*6, vy: (Math.random()-0.5)*6, life: 30, color: '#f00' });
+          enemies.splice(i, 1);
+        }
+        break;
+      }
+    }
+
+    // Player collision
+    if (player.x < e.x + e.w && player.x + player.w > e.x && player.y < e.y + e.h && player.y + player.h > e.y) {
+      lives--; enemies.splice(i, 1);
+      shake = 15;
+      for (let k = 0; k < 12; k++) particles.push({ x: player.x + player.w/2, y: player.y + player.h/2, vx: (Math.random()-0.5)*8, vy: (Math.random()-0.5)*8, life: 40, color: '#fff' });
+      if (lives <= 0) gameOver = true;
+    }
+  }
+
+  // Particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.life--;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  document.getElementById('score').textContent = score;
+  document.getElementById('lives').textContent = lives;
+
+  // Reset keys pressed this frame
+  for (const k in keysPressed) keysPressed[k] = false;
+}
+
+function draw() {
+  // Screen shake
+  if (shake > 0) {
+    ctx.save();
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    shake *= 0.9;
+  } else {
+    shake = 0;
+  }
+
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+
+  // Player (triangle ship)
+  ctx.fillStyle = '#0f0';
+  ctx.beginPath();
+  ctx.moveTo(player.x + player.w/2, player.y);
+  ctx.lineTo(player.x, player.y + player.h);
+  ctx.lineTo(player.x + player.w, player.y + player.h);
+  ctx.closePath(); ctx.fill();
+
+  // Bullets
+  ctx.fillStyle = '#ff0';
+  bullets.forEach(b => ctx.fillRect(b.x, b.y, b.w, b.h));
+
+  // Enemies (round)
+  enemies.forEach(e => {
+    const cx = e.x + e.w/2;
+    const cy = e.y + e.h/2;
+    const r = Math.min(e.w, e.h) / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h);
+    ctx.restore();
+  });
+
+  // Boss
+  if (bossSpawned && boss) {
+    const cx = boss.x + boss.w/2;
+    const cy = boss.y + boss.h/2;
+    const r = Math.min(boss.w, boss.h) / 2;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    if (boss.hitFlash > 0) ctx.filter = 'brightness(2)';
+    ctx.drawImage(enemyImg, boss.x, boss.y, boss.w, boss.h);
+    ctx.filter = 'none';
+    ctx.restore();
+
+    // Boss health bar
+    const barW = boss.w;
+    const barH = 10;
+    const barX = boss.x;
+    const barY = boss.y - 18;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = boss.hp > boss.maxHp * 0.5 ? '#0f0' : boss.hp > boss.maxHp * 0.25 ? '#ff0' : '#f00';
+    ctx.fillRect(barX, barY, barW * (boss.hp / boss.maxHp), barH);
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    // Boss label
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('JEFE', cx, barY - 5);
+  }
+
+  // Particles
+  particles.forEach(p => {
+    ctx.globalAlpha = p.life / 40;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x, p.y, 3, 3);
+    ctx.globalAlpha = 1;
+  });
+
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#f00'; ctx.font = '48px monospace'; ctx.textAlign = 'center';
+    ctx.fillText('GAME OVER', W/2, H/2 - 20);
+    ctx.font = '24px monospace'; ctx.fillStyle = '#fff';
+    ctx.fillText(`Puntuación: ${score}`, W/2, H/2 + 30);
+    ctx.fillText('Presiona R o el botón ↻ para reiniciar', W/2, H/2 + 70);
+    restartBtn.style.display = 'flex';
+  } else {
+    restartBtn.style.display = 'none';
+  }
+
+  if (shake > 0) ctx.restore();
+}
+
+function loop() {
+  update(); draw();
+  if (gameOver && keys['KeyR']) { location.reload(); }
+  requestAnimationFrame(loop);
+}
+loop();
