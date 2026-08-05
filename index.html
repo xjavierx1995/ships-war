@@ -2,16 +2,38 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Shoot 'em Up Simple</title>
   <style>
-    body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: monospace; color: #fff; }
-    canvas { border: 2px solid #444; background: #000; }
-    #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; }
+    body { margin: 0; background: #111; display: flex; justify-content: center; align-items: center; min-height: 100vh; font-family: monospace; color: #fff; overflow: hidden; }
+    #game-container { position: relative; width: 100%; max-width: 600px; aspect-ratio: 3/4; }
+    canvas { width: 100%; height: 100%; border: 2px solid #444; background: #000; touch-action: none; display: block; }
+    #ui { position: absolute; top: 10px; left: 10px; pointer-events: none; font-size: clamp(12px, 3vw, 16px); z-index: 5; }
+    #controls { position: absolute; bottom: 10px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 10px; pointer-events: none; z-index: 10; }
+    .joystick-area { width: 100px; height: 100px; pointer-events: auto; }
+    .joystick-base { width: 80px; height: 80px; border: 2px solid #444; border-radius: 50%; background: rgba(255,255,255,0.1); position: relative; margin: 10px; }
+    .joystick-stick { width: 32px; height: 32px; background: rgba(255,255,255,0.5); border-radius: 50%; position: absolute; top: 24px; left: 24px; pointer-events: none; transition: top 0.05s, left 0.05s; }
+    .shoot-btn { width: 70px; height: 70px; border: 2px solid #444; border-radius: 50%; background: rgba(255,100,100,0.3); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; pointer-events: auto; user-select: none; margin: 10px; }
+    .shoot-btn:active { background: rgba(255,100,100,0.6); }
+    .restart-btn { width: 50px; height: 50px; border: 2px solid #444; border-radius: 50%; background: rgba(100,255,100,0.3); display: flex; align-items: center; justify-content: center; font-size: 24px; color: #fff; pointer-events: auto; user-select: none; margin: 20px 10px 10px auto; }
+    .restart-btn:active { background: rgba(100,255,100,0.6); }
+    @media (min-width: 768px) { #controls { display: none; } }
   </style>
 </head>
 <body>
   <div id="ui">Puntuación: <span id="score">0</span> | Vidas: <span id="lives">3</span></div>
-  <canvas id="game" width="600" height="800"></canvas>
+  <div id="game-container">
+    <canvas id="game" width="600" height="800"></canvas>
+  </div>
+  <div id="controls">
+    <div class="joystick-area" id="joystickArea">
+      <div class="joystick-base">
+        <div class="joystick-stick" id="joystickStick"></div>
+      </div>
+    </div>
+    <div class="shoot-btn" id="shootBtn">🔫</div>
+    <div class="restart-btn" id="restartBtn" style="display:none">↻</div>
+  </div>
   <script>
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
@@ -24,6 +46,99 @@
       keys[e.code] = true;
     });
     document.addEventListener('keyup', e => keys[e.code] = false);
+
+    // Touch controls
+    const touchState = { moveX: 0, moveY: 0, shoot: false, shootPressed: false };
+    const joystickArea = document.getElementById('joystickArea');
+    const joystickStick = document.getElementById('joystickStick');
+    const shootBtn = document.getElementById('shootBtn');
+    let joystickActive = false, joystickStartX = 0, joystickStartY = 0, joystickId = null;
+
+    function updateJoystick(clientX, clientY) {
+      const rect = joystickArea.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let dx = clientX - centerX;
+      let dy = clientY - centerY;
+      const maxDist = 50;
+      const dist = Math.hypot(dx, dy);
+      if (dist > maxDist) {
+        dx = dx / dist * maxDist;
+        dy = dy / dist * maxDist;
+      }
+      joystickStick.style.left = (30 + dx) + 'px';
+      joystickStick.style.top = (30 + dy) + 'px';
+      touchState.moveX = (dx / maxDist) * 0.6;
+      touchState.moveY = (dy / maxDist) * 0.6;
+    }
+
+    joystickArea.addEventListener('touchstart', e => {
+      e.preventDefault();
+      for (const touch of e.changedTouches) {
+        if (joystickId === null) {
+          joystickId = touch.identifier;
+          joystickActive = true;
+          const rect = joystickArea.getBoundingClientRect();
+          joystickStartX = rect.left + rect.width / 2;
+          joystickStartY = rect.top + rect.height / 2;
+          updateJoystick(touch.clientX, touch.clientY);
+        }
+      }
+    }, { passive: false });
+
+    joystickArea.addEventListener('touchmove', e => {
+      e.preventDefault();
+      for (const touch of e.changedTouches) {
+        if (touch.identifier === joystickId) {
+          updateJoystick(touch.clientX, touch.clientY);
+        }
+      }
+    }, { passive: false });
+
+    function resetJoystick() {
+      joystickActive = false;
+      joystickId = null;
+      touchState.moveX = 0;
+      touchState.moveY = 0;
+      joystickStick.style.left = '30px';
+      joystickStick.style.top = '30px';
+    }
+
+    joystickArea.addEventListener('touchend', e => {
+      for (const touch of e.changedTouches) {
+        if (touch.identifier === joystickId) resetJoystick();
+      }
+    });
+    joystickArea.addEventListener('touchcancel', e => {
+      for (const touch of e.changedTouches) {
+        if (touch.identifier === joystickId) resetJoystick();
+      }
+    });
+
+    shootBtn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      touchState.shoot = true;
+      if (!touchState.shootPressed) touchState.shootPressed = true;
+    }, { passive: false });
+    shootBtn.addEventListener('touchend', e => {
+      e.preventDefault();
+      touchState.shoot = false;
+      touchState.shootPressed = false;
+    }, { passive: false });
+    shootBtn.addEventListener('touchcancel', e => {
+      touchState.shoot = false;
+      touchState.shootPressed = false;
+    }, { passive: false });
+
+    // Restart button
+    const restartBtn = document.getElementById('restartBtn');
+    restartBtn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      if (gameOver) location.reload();
+    }, { passive: false });
+    restartBtn.addEventListener('click', e => {
+      if (gameOver) location.reload();
+    });
 
     const player = { x: W/2 - 20, y: H - 80, w: 40, h: 40, speed: 6, cooldown: 0 };
     const bullets = [];
@@ -47,20 +162,21 @@
     function update() {
       if (gameOver) return;
 
-      // Player movement
-      if (keys['ArrowLeft'] || keys['KeyA']) player.x -= player.speed;
-      if (keys['ArrowRight'] || keys['KeyD']) player.x += player.speed;
-      if (keys['ArrowUp'] || keys['KeyW']) player.y -= player.speed;
-      if (keys['ArrowDown'] || keys['KeyS']) player.y += player.speed;
+      // Player movement (keyboard + touch)
+      if (keys['ArrowLeft'] || keys['KeyA'] || touchState.moveX < -0.1) player.x -= player.speed;
+      if (keys['ArrowRight'] || keys['KeyD'] || touchState.moveX > 0.1) player.x += player.speed;
+      if (keys['ArrowUp'] || keys['KeyW'] || touchState.moveY < -0.1) player.y -= player.speed;
+      if (keys['ArrowDown'] || keys['KeyS'] || touchState.moveY > 0.1) player.y += player.speed;
       player.x = Math.max(0, Math.min(W - player.w, player.x));
       player.y = Math.max(0, Math.min(H - player.h, player.y));
 
-      // Shoot
-      if ((keysPressed['Space'] || keysPressed['KeyJ']) && player.cooldown <= 0) {
+      // Shoot (keyboard + touch)
+      if ((keysPressed['Space'] || keysPressed['KeyJ'] || touchState.shootPressed) && player.cooldown <= 0) {
         bullets.push({ x: player.x + player.w/2 - 2, y: player.y, w: 4, h: 15, vy: -10 });
         shotSound.currentTime = 0;
         shotSound.play();
         player.cooldown = 10;
+        touchState.shootPressed = false;
       }
       player.cooldown--;
 
@@ -170,7 +286,10 @@
         ctx.fillText('GAME OVER', W/2, H/2 - 20);
         ctx.font = '24px monospace'; ctx.fillStyle = '#fff';
         ctx.fillText(`Puntuación: ${score}`, W/2, H/2 + 30);
-        ctx.fillText('Presiona R para reiniciar', W/2, H/2 + 70);
+        ctx.fillText('Presiona R o el botón ↻ para reiniciar', W/2, H/2 + 70);
+        restartBtn.style.display = 'flex';
+      } else {
+        restartBtn.style.display = 'none';
       }
 
       if (shake > 0) ctx.restore();
@@ -178,7 +297,6 @@
 
     function loop() {
       update(); draw();
-      if (gameOver && keys['KeyR']) { location.reload(); }
       requestAnimationFrame(loop);
     }
     loop();
