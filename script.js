@@ -109,10 +109,11 @@ const bullets = [];
 const enemies = [];
 const particles = [];
 let score = 0, lives = 3, spawnTimer = 0, gameOver = false, shake = 0;
-let boss = null, bossSpawned = false, nextBossScore = 1500, bossDefeatedCooldown = 0;
+let boss = null, bossSpawned = false, nextBossScore = 1500, bossDefeatedCooldown = 0, bossWaveActive = false;
 
 const enemyImg = new Image();
 enemyImg.src = 'assets/images/enemy.png';
+enemyImg.onerror = () => console.warn('No se pudo cargar enemy.png');
 const enemyDeadSound = new Audio('assets/sounds/enemy-dead.ogg');
 const shotSound = new Audio('assets/sounds/shot.mp3');
 
@@ -145,9 +146,10 @@ function update() {
 
   // Check for boss spawn
   if (bossDefeatedCooldown > 0) bossDefeatedCooldown--;
-  if (!bossSpawned && bossDefeatedCooldown === 0 && score >= nextBossScore) {
+  if (!bossSpawned && !bossWaveActive && bossDefeatedCooldown === 0 && score >= nextBossScore) {
     spawnBoss();
     nextBossScore += 1500;
+    bossWaveActive = true;
   }
 
   // Player movement (keyboard + touch)
@@ -202,13 +204,14 @@ function update() {
           boss = null;
           spawnTimer = 0;
           bossDefeatedCooldown = 60;
+          bossWaveActive = false;
         }
         break;
       }
     }
 
     // Player collision with boss
-    if (player.x < boss.x + boss.w && player.x + player.w > boss.x && player.y < boss.y + boss.h && player.y + player.h > boss.y) {
+    if (boss && player.x < boss.x + boss.w && player.x + player.w > boss.x && player.y < boss.y + boss.h && player.y + player.h > boss.y) {
       lives--; shake = 20;
       for (let k = 0; k < 20; k++) particles.push({ x: player.x + player.w/2, y: player.y + player.h/2, vx: (Math.random()-0.5)*10, vy: (Math.random()-0.5)*10, life: 50, color: '#fff' });
       if (lives <= 0) gameOver = true;
@@ -294,7 +297,12 @@ function draw() {
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h);
+    if (enemyImg.complete && enemyImg.naturalWidth > 0) {
+      ctx.drawImage(enemyImg, e.x, e.y, e.w, e.h);
+    } else {
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(e.x, e.y, e.w, e.h);
+    }
     ctx.restore();
   });
 
@@ -308,7 +316,12 @@ function draw() {
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
     if (boss.hitFlash > 0) ctx.filter = 'brightness(2)';
-    ctx.drawImage(enemyImg, boss.x, boss.y, boss.w, boss.h);
+    if (enemyImg.complete && enemyImg.naturalWidth > 0) {
+      ctx.drawImage(enemyImg, boss.x, boss.y, boss.w, boss.h);
+    } else {
+      ctx.fillStyle = '#f00';
+      ctx.fillRect(boss.x, boss.y, boss.w, boss.h);
+    }
     ctx.filter = 'none';
     ctx.restore();
 
